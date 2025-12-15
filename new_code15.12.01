@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+from time import sleep
+from ev3dev2.motor import LargeMotor, OUTPUT_A, OUTPUT_B
+from ev3dev2.sensor import INPUT_1, INPUT_2
+from ev3dev2.sensor.lego import ColorSensor
+# Zakładam, że czujnik dotyku S1 jest tylko do start/stop i pomijam go w pętli
+
+m1 = LargeMotor(OUTPUT_A) # Lewy
+m2 = LargeMotor(OUTPUT_B) # Prawy
+prawy_sensor = ColorSensor(INPUT_2)
+lewy_sensor = ColorSensor(INPUT_1)
+
+lewy_sensor.mode = 'COL-REFLECT'
+prawy_sensor.mode = 'COL-REFLECT'
+
+# --- PARAMETRY REGULATORA PD ---
+TP = 20           # (Target Power) Bazowa prędkość (możesz dać większą niż 15)
+KP = 0.5          # Wzmocnienie Proporcjonalne (do korygowania błędu)
+KD = 1.0          # Wzmocnienie Różniczkujące (do wygładzania jazdy)
+THRESHOLD = 30    # Wartość graniczna: poniżej 30 to linia (czarny)
+
+# --- ZMIENNE DLA REGULATORA PD ---
+last_error = 0 # Przechowujemy poprzedni błąd do obliczenia pochodnej
+
+# --- ZMIENNE DLA COFANIA ---
+REVERSE_SPEED = -10 # Prędkość cofania (ujemna)
+REVERSE_TIME = 0.3  # Czas cofania w sekundach
+
+# --- PRZYGOTOWANIE ---
+# Zakładam, że musimy zaimplementować start przyciskiem
+# s1.wait_for_pressed() 
+sleep(1) 
+
+running = True
+while running:
+    # --- 1. ODCZYT ---
+    l_val = lewy_sensor.reflected_light_intensity
+    r_val = prawy_sensor.reflected_light_intensity
+
+    # --- 2. LOGIKA SKRZYŻOWAŃ / DETEKCJA ZAGUBIENIA ---
+
+    # A) ZAGUBIENIE (Overshoot) - OBA WIDZĄ BIAŁE (znacząco powyżej progu)
+    # Wykrycie, że robot całkowicie przejechał linię i jest na białej podłodze
+    if l_val > THRESHOLD * 2 and r_val > THRESHOLD * 2: 
+        
+        # Wykonaj manewr cofania
+        m1.on(REVERSE_SPEED)
+        m2.on(REVERSE_SPEED)
+        sleep(REVERSE_TIME) 
+        
+        # Zatrzymaj się i wykonaj ostry skręt, by złapać linię
+        # Na przykład, jeśli miało być skrzyżowanie w prawo, cofamy i skręcamy w prawo:
+        m1.on(TP)
+        m2.off() # Ostre skręcenie w prawo
+        sleep(0.5) 
+
+        # Po manewrze skrętnym, kontynuujemy pętlę i wracamy do regulacji PD
+        continue # Przejdź do następnej iteracji pętli
+
+    # B) SKRZYŻOWANIE (OBA CZARNE) - Priorytet jazdy prosto
+    if l_val < THRESHOLD and r_val < THRESHOLD:
+        m1.on(TP)
+        m2.on(TP)
+        # print("Skrzyzowanie, jade prosto")
+        last_error = 0 # Reset błędu, bo na skrzyżowaniu chcemy jechać prosto
+        continue # Przejdź do następnej iteracji, pomiń regulację PD
+        
+    # --- 3. REGULATOR PD (na proste odcinki i łagodne zakręty) ---
+
+    # Obliczenie Błędu (Error) - Proporcjonalny
+    error = l_val - r_val
+    
+    # Obliczenie pochodnej błędu (Derivative) - Różniczkujący
+    # To jest szybkość zmiany błędu od ostatniej pętli
+    derivative = error - last_error
+    
+    # Obliczenie Całkowitej Korekty Skrętu
+    turn = (error * KP) + (derivative * KD)
+    
+    # --- 4. APLIKACJA STEROWANIA ---
+    
+    # Oblicz prędkości
+    speed_m1 = TP + turn
+    speed_m2 = TP - turn
+
+    # Zabezpieczenie mocy
+    speed_m1 = max(min(speed_m1, 100), -100)
+    speed_m2 = max(min(speed_m2, 100), -100)
+    
+    # Wykonanie ruchu
+    m1.on(speed_m1)
+    m2.on(speed_m2)
+    
+    # Zapisanie bieżącego błędu dla następnej iteracji
+    last_error = error
+
+    # --- 5. ZAKOŃCZENIE ---
+    # Jeśli s1.is_pressed:
+    #     running = False
+
+# m1.off()
+# m2.off()
