@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import time
+from time import sleep
 
 from ev3dev2.motor import LargeMotor, MediumMotor, OUTPUT_A, OUTPUT_B, OUTPUT_C
 
@@ -49,6 +50,7 @@ class Sterowanie:
 	def turn_right(self):
 		m1.on(-self.sign*speed)
 		m2.on(self.sign*speed)
+		self.strona = 'R'
 		print('turning Right')
 
 	def skrzyzowanie(self):
@@ -57,15 +59,23 @@ class Sterowanie:
 		print('Go straight')
 
 	def wstecz(self):
-		m1.on(self.sign*speed)
-		m2.on(self.sign*speed)
-		print('idz wstecz')
-		if (self.strona == 'R'):
-			m1.on_for_degrees(power=self.sign * speed, degrees=-90, block=True)
-			m2.on_for_degrees(power=self.sign * speed, degrees=90, block=True)
-		if (self.strona == 'L'):
+		if(self.strona == 'R'):
+			m1.on(-self.sign*speed)
+			m2.on(self.sign*speed)
+			print('korekcja prawa')
+			sleep(2)
+		if(self.strona == 'L'):
 			m1.on(self.sign*speed)
 			m2.on(-self.sign*speed)
+			print('korekcja lewa')
+			sleep(2)
+		print('idz wstecz')
+#		if (self.strona == 'R'):
+#			m1.on_for_degrees(power=self.sign * speed, degrees=-90, block=True)
+#			m2.on_for_degrees(power=self.sign * speed, degrees=90, block=True)
+#		if (self.strona == 'L'):
+#			m1.on(self.sign*speed)
+#			m2.on(-self.sign*speed)
 
 	def wylaczenie(self):
 		self.sign = 0
