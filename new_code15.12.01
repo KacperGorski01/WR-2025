@@ -7,107 +7,89 @@ from ev3dev2.sensor.lego import TouchSensor, ColorSensor
 # --- 1. KONFIGURACJA SPRZĘTU ---
 
 # Silniki
-m1 = LargeMotor(OUTPUT_A)  # Lewy
-m2 = LargeMotor(OUTPUT_B)  # Prawy
-m3 = MediumMotor(OUTPUT_C) # Dodatkowy silnik (bezczynny w tym kodzie)
+m1 = LargeMotor(OUTPUT_A)  # Lewy motor (OUTPUT_A)
+m2 = LargeMotor(OUTPUT_B)  # Prawy motor (OUTPUT_B)
+m3 = MediumMotor(OUTPUT_C) # Dodatkowy silnik (nieużywany)
 
 # Sensory
-touch_sensor = TouchSensor(INPUT_3) # Czujnik dotyku
-s1 = ColorSensor(INPUT_1)           # Lewy sensor (s1)
-s2 = ColorSensor(INPUT_2)           # Prawy sensor (s2)
+s3 = TouchSensor(INPUT_3)  # Czujnik dotyku (STOP)
+s1 = ColorSensor(INPUT_1)  # Lewy sensor (INPUT_1)
+s2 = ColorSensor(INPUT_2)  # Prawy sensor (INPUT_2)
 
 # Ustawiamy tryb czujników na odbite światło (0-100)
+# Wartości: 0 (Czarny) do 100 (Biały)
 s1.mode = 'COL-REFLECT'
 s2.mode = 'COL-REFLECT'
 
-# --- 2. PARAMETRY REGULATORA PD I LOGIKI ---
+# --- 2. PARAMETRY REGULATORA P ---
 
-TP = 20           # (Target Power) Bazowa prędkość (Im większa, tym szybszy robot)
+TP = 30           # (Target Power) Bazowa prędkość (Im większa, tym szybszy robot)
 KP = 0.5          # Wzmocnienie Proporcjonalne (Odpowiada za siłę korekty)
-KD = 1.0          # Wzmocnienie Różniczkujące (Wygładza jazdę na prostych)
-THRESHOLD = 30    # Wartość graniczna: poniżej 30 to linia (czarny)
+THRESHOLD = 30    # Wartość graniczna: Poniżej tej wartości to linia (Czarny)
+                  # To jest orientacyjna wartość, którą trzeba dostosować!
 
-REVERSE_SPEED = -10 # Prędkość cofania (ujemna)
-REVERSE_TIME = 0.3  # Czas cofania w sekundach
-TURN_TIME = 0.5     # Czas manewru skrętu po cofaniu
+# --- 3. GŁÓWNA LOGIKA ---
 
-# --- 3. ZMIENNE DLA REGULATORA PD ---
-last_error = 0 # Przechowujemy poprzedni błąd do obliczenia pochodnej
-
-# --- 4. START PROGRAMU ---
-
-print("Gotowy. Użyj Touch Sensor, aby rozpocząć.")
-touch_sensor.wait_for_pressed()
+print("Gotowy. Użyj Touch Sensor (s3), aby rozpocząć.")
+s3.wait_for_pressed()
 print("Start!")
 sleep(0.5) 
 
-running = True
-while running:
+sign = 1 # Znak do sterowania kierunkiem / zatrzymaniem
+
+while sign == 1:
     
     # --- A. ODCZYT ---
-    l_val = s1.reflected_light_intensity
-    r_val = s2.reflected_light_intensity
+    l_val = s1.reflected_light_intensity # Odczyt lewego sensora (0-100)
+    r_val = s2.reflected_light_intensity # Odczyt prawego sensora (0-100)
 
-    # --- B. LOGIKA SKRZYŻOWAŃ / DETEKCJA ZAGUBIENIA ---
+    # --- B. OBLICZENIE BŁĘDU ---
 
-    # B1. ZAGUBIENIE (Overshoot) - OBA WIDZĄ BIAŁE (znacząco powyżej progu)
-    # Wykrycie, że robot całkowicie przejechał linię (koniec skrzyżowania)
-    if l_val > THRESHOLD * 2 and r_val > THRESHOLD * 2: 
-        
-        # Manewr Cofania i Skrętu w Prawo, aby złapać linię
-        # 1. Cofanie
-        m1.on(REVERSE_SPEED)
-        m2.on(REVERSE_SPEED)
-        sleep(REVERSE_TIME) 
-        
-        # 2. Skręt w prawo (Lewe koło do przodu, Prawe stoi/cofnij)
-        m1.on(TP)
-        m2.off() 
-        sleep(TURN_TIME) 
-
-        # Reset błędu i kontynuacja pętli
-        last_error = 0
-        continue 
-
-    # B2. SKRZYŻOWANIE (OBA CZARNE) - Priorytet jazdy prosto
-    # Jeśli oba sensory są na linii, jedź prosto
-    if l_val < THRESHOLD and r_val < THRESHOLD:
-        m1.on(TP)
-        m2.on(TP)
-        last_error = 0 # Reset błędu, by regulator nie korygował na skrzyżowaniu
-        continue 
-        
-    # --- C. REGULATOR PD (na proste odcinki i łagodne zakręty) ---
-
-    # C1. Obliczenie Błędu Proporcjonalnego
-    error = l_val - r_val # Błąd: Jeśli lewy widzi czarne, błąd jest ujemny, turn będzie ujemny (skręt w lewo)
+    # Błąd: Jeśli robot jest idealnie na linii, jeden sensor widzi czarny (~0), drugi biały (~100).
+    # Idealna wartość środka: (Czarne + Białe) / 2.
+    # W uproszczonym regulatorze P, błąd jest po prostu różnicą odczytów:
     
-    # C2. Obliczenie pochodnej błędu (Różniczkujący)
-    derivative = error - last_error
+    # Przykład:
+    #   - L=10 (Czarny) i R=90 (Biały) -> Błąd = 10 - 90 = -80
+    #   - L=90 (Biały) i R=10 (Czarny) -> Błąd = 90 - 10 = +80
     
-    # C3. Obliczenie Całkowitej Korekty Skrętu
-    turn = (error * KP) + (derivative * KD)
+    error = l_val - r_val 
     
-    # C4. APLIKACJA STEROWANIA
+    # --- C. OBLICZENIE KOREKTY SKRĘTU ---
+    
+    turn = error * KP
+    
+    # --- D. APLIKACJA STEROWANIA ---
+    
+    # Prędkość dla motorów: bazowa prędkość (TP) + korekta skrętu (turn)
+    # 
+    #   - Jeśli Błąd jest ujemny (-80) -> turn jest ujemny.
+    #     L: TP + (-Turn) = mniejsza prędkość
+    #     R: TP - (-Turn) = większa prędkość
+    #     Wynik: Lewe koło wolniej, Prawe szybciej => Skręt w Lewo, by złapać linię. PRAWIDŁOWO.
+    #
+    #   - Jeśli Błąd jest dodatni (+80) -> turn jest dodatni.
+    #     L: TP + (+Turn) = większa prędkość
+    #     R: TP - (+Turn) = mniejsza prędkość
+    #     Wynik: Lewe koło szybciej, Prawe wolniej => Skręt w Prawo, by złapać linię. PRAWIDŁOWO.
+    
     speed_m1 = TP + turn
     speed_m2 = TP - turn
 
-    # Ograniczenie mocy do bezpiecznego zakresu
+    # Ograniczenie mocy do bezpiecznego zakresu (-100 do 100)
     speed_m1 = max(min(speed_m1, 100), -100)
     speed_m2 = max(min(speed_m2, 100), -100)
     
-    # Wykonanie ruchu
-    m1.on(speed_m1)
-    m2.on(speed_m2)
-    
-    # C5. Zapisanie bieżącego błędu
-    last_error = error
+    # Wykonanie ruchu (zakładamy, że TP jest dodatnie, więc jedziemy do przodu)
+    m1.on(speed_m1 * sign)
+    m2.on(speed_m2 * sign)
 
-    # --- D. ZAKOŃCZENIE ---
-    if touch_sensor.is_pressed:
-        running = False
-
-# Zatrzymanie wszystkich silników po wyjściu z pętli
-m1.off()
-m2.off()
-m3.off()
+    # --- E. ZATRZYMANIE ---
+    if s3.is_pressed:
+        sign = 0
+        m1.off()
+        m2.off()
+        print("Zatrzymano.")
+        break
+        
+    sleep(0.01) # Krótka przerwa dla stabilności

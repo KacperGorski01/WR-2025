@@ -1,77 +1,98 @@
 #!/usr/bin/env python3
 
-from time import sleep
+import time
 
 from ev3dev2.motor import LargeMotor, MediumMotor, OUTPUT_A, OUTPUT_B, OUTPUT_C
 
 from ev3dev2.sensor import INPUT_1, INPUT_2,INPUT_3
 from ev3dev2.sensor.lego import TouchSensor, ColorSensor
 
-lewy_motor = LargeMotor(OUTPUT_A)	#lewy
-prawy_motor = LargeMotor(OUTPUT_B)	#prawy
+m1 = LargeMotor(OUTPUT_A)	#lewy
+m2 = LargeMotor(OUTPUT_B)	#prawy
 m3 = MediumMotor(OUTPUT_C)
 
 s1 = TouchSensor(INPUT_3)
-prawy_sensor = ColorSensor(INPUT_2)	#prawy
-lewy_sensor = ColorSensor(INPUT_1)	#lewy
+s2 = ColorSensor(INPUT_2)	#prawy
+s3 = ColorSensor(INPUT_1)	#lewy
 
-sign = 1
-speed = -5
+speed = 5
+
+class Sterowanie:
+	sign = 1
+	strona = 'Puste'
+	def __init__(self):
+		self.stan = 'Idle'
+		self.czas_wejscia_stan = time.time()
+		print("Nacisnij touch sensor! Aktualny stan: Idle")
+
+	def ustaw_stan(self, nowy_stan):
+		if(self.stan != nowy_stan):
+			self.stan = nowy_stan
+			self.czas_wejscia_stan = time.time()
+	
+	def go_straight(self):
+		czas_trwania = time.time() - self.czas_wejscia_stan
+		m1.on(-self.sign*speed)
+		m2.on(-self.sign*speed)
+		if(czas_trwania >= 2.0):
+			m1.on(-self.sign*speed*2)
+			m2.on(-self.sign*speed*2)
+
+		print('Go straight')
+
+	def turn_left(self):
+		m1.on(self.sign*speed)
+		m2.on(-self.sign*speed)
+		self.strona = 'L'
+		print('turning Left')
+
+	def turn_right(self):
+		m1.on(-self.sign*speed)
+		m2.on(self.sign*speed)
+		print('turning Right')
+
+	def skrzyzowanie(self):
+		m1.on(-self.sign*speed)
+		m2.on(-self.sign*speed)
+		print('Go straight')
+
+	def wstecz(self):
+		m1.on(self.sign*speed)
+		m2.on(self.sign*speed)
+		print('idz wstecz')
+		if (self.strona == 'R'):
+			m1.on_for_degrees(power=self.sign * speed, degrees=-90, block=True)
+			m2.on_for_degrees(power=self.sign * speed, degrees=90, block=True)
+		if (self.strona == 'L'):
+			m1.on(self.sign*speed)
+			m2.on(-self.sign*speed)
+
+	def wylaczenie(self):
+		self.sign = 0
+
+pojazd = Sterowanie()
+
 
 while True:
 
-#	if(prawy_sensor.color_name == "Black" and lewy_sensor.color_name == "Black"):
-#		lewy_motor.on(sign*speed)
-#		prawy_motor.on(sign*speed)
-#		print('Going straight')
-#		prev = [lewy_sensor.color_name,prawy_sensor.color_name]
+	if(pojazd.stan == 'Idle' and s1.is_pressed):
+		pojazd.state = pojazd.go_straight()
 
-	#Skręt w prawo
-	elif(prawy_sensor.color_name == "Black" and lewy_sensor.color_name == "White"):
-		lewy_motor.on(sign*speed)
-		prawy_motor.on(0*speed)
-		print('turning Rignt')
-		prev = [lewy_sensor.color_name,prawy_sensor.color_name]
+	elif(s2.color_name == "Black" and s3.color_name == "White"):
+		pojazd.state = pojazd.turn_right()
 
-		if(lewy_sensor.color_name == "Black" and prawy_sensor.color_name == "White"):
-			while()
-				lewy_motor.on(0*speed)
-				prawy_motor.on(sign*speed)
-				print('turning Rignt')
-				prev = [lewy_sensor.color_name,prawy_sensor.color_name]
+	elif(s3.color_name == "Black" and s2.color_name == "White"):
+		pojazd.state = pojazd.turn_left()
 
+	elif(s3.color_name == "Black" and s2.color_name == "Black"):
+		pojazd.state = pojazd.wstecz()
+	
 
-	#Skręt w lewo
-	elif(lewy_sensor.color_name == "Black" and prawy_sensor.color_name == "White"):
-		lewy_motor.on(0*speed)
-		prawy_motor.on(sign*speed)
-		print('turning Left')
-		prev = [lewy_sensor.color_name,prawy_sensor.color_name]
-		
-#		while True:
-#			if(lewy_sensor.color_name == "White"):
-#				lewy_motor.on(-sign*speed)
-#				prawy_motor.on(0*speed)
-#				prev = [lewy_sensor.color_name,prawy_sensor.color_name]
-#
-#			else:
-#				break
+	elif(s1.is_pressed):
+		pojazd.state = pojazd.wylaczenie()
 
-	#Jazda prosto
 	else:
-		m1.on(-sign*speed)
-		m2.on(-sign*speed)
-		print('Go straight')
-		
-#	m1.on(sign*speed)
-#	m2.on(-sign*speed)
-#	m3.on(0*speed)
-#	print('Button ' + ('pressed.' if s1.is_pressed else 'not pressed.'))
-#	print('Color 1 ' + str(s2.rgb) + ' detected as ' + str(s2.color_name) + '.')
-#	print('Color 2 ' + str(s3.rgb) + ' detected as ' + str(s3.color_name) + '.')
-	sleep(0.01)
+		pojazd.state = pojazd.go_straight()
 
-	if s1.is_pressed:
-		sign = 0
 
 
