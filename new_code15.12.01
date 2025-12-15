@@ -1,89 +1,98 @@
 #!/usr/bin/env python3
 from time import sleep
-from ev3dev2.motor import LargeMotor, OUTPUT_A, OUTPUT_B
-from ev3dev2.sensor import INPUT_1, INPUT_2
-from ev3dev2.sensor.lego import ColorSensor
-# Zakładam, że czujnik dotyku S1 jest tylko do start/stop i pomijam go w pętli
+from ev3dev2.motor import LargeMotor, MediumMotor, OUTPUT_A, OUTPUT_B, OUTPUT_C
+from ev3dev2.sensor import INPUT_1, INPUT_2, INPUT_3
+from ev3dev2.sensor.lego import TouchSensor, ColorSensor
 
-m1 = LargeMotor(OUTPUT_A) # Lewy
-m2 = LargeMotor(OUTPUT_B) # Prawy
-prawy_sensor = ColorSensor(INPUT_2)
-lewy_sensor = ColorSensor(INPUT_1)
+# --- 1. KONFIGURACJA SPRZĘTU ---
 
-lewy_sensor.mode = 'COL-REFLECT'
-prawy_sensor.mode = 'COL-REFLECT'
+# Silniki
+m1 = LargeMotor(OUTPUT_A)  # Lewy
+m2 = LargeMotor(OUTPUT_B)  # Prawy
+m3 = MediumMotor(OUTPUT_C) # Dodatkowy silnik (bezczynny w tym kodzie)
 
-# --- PARAMETRY REGULATORA PD ---
-TP = 20           # (Target Power) Bazowa prędkość (możesz dać większą niż 15)
-KP = 0.5          # Wzmocnienie Proporcjonalne (do korygowania błędu)
-KD = 1.0          # Wzmocnienie Różniczkujące (do wygładzania jazdy)
+# Sensory
+touch_sensor = TouchSensor(INPUT_3) # Czujnik dotyku
+s1 = ColorSensor(INPUT_1)           # Lewy sensor (s1)
+s2 = ColorSensor(INPUT_2)           # Prawy sensor (s2)
+
+# Ustawiamy tryb czujników na odbite światło (0-100)
+s1.mode = 'COL-REFLECT'
+s2.mode = 'COL-REFLECT'
+
+# --- 2. PARAMETRY REGULATORA PD I LOGIKI ---
+
+TP = 20           # (Target Power) Bazowa prędkość (Im większa, tym szybszy robot)
+KP = 0.5          # Wzmocnienie Proporcjonalne (Odpowiada za siłę korekty)
+KD = 1.0          # Wzmocnienie Różniczkujące (Wygładza jazdę na prostych)
 THRESHOLD = 30    # Wartość graniczna: poniżej 30 to linia (czarny)
 
-# --- ZMIENNE DLA REGULATORA PD ---
-last_error = 0 # Przechowujemy poprzedni błąd do obliczenia pochodnej
-
-# --- ZMIENNE DLA COFANIA ---
 REVERSE_SPEED = -10 # Prędkość cofania (ujemna)
 REVERSE_TIME = 0.3  # Czas cofania w sekundach
+TURN_TIME = 0.5     # Czas manewru skrętu po cofaniu
 
-# --- PRZYGOTOWANIE ---
-# Zakładam, że musimy zaimplementować start przyciskiem
-# s1.wait_for_pressed() 
-sleep(1) 
+# --- 3. ZMIENNE DLA REGULATORA PD ---
+last_error = 0 # Przechowujemy poprzedni błąd do obliczenia pochodnej
+
+# --- 4. START PROGRAMU ---
+
+print("Gotowy. Użyj Touch Sensor, aby rozpocząć.")
+touch_sensor.wait_for_pressed()
+print("Start!")
+sleep(0.5) 
 
 running = True
 while running:
-    # --- 1. ODCZYT ---
-    l_val = lewy_sensor.reflected_light_intensity
-    r_val = prawy_sensor.reflected_light_intensity
+    
+    # --- A. ODCZYT ---
+    l_val = s1.reflected_light_intensity
+    r_val = s2.reflected_light_intensity
 
-    # --- 2. LOGIKA SKRZYŻOWAŃ / DETEKCJA ZAGUBIENIA ---
+    # --- B. LOGIKA SKRZYŻOWAŃ / DETEKCJA ZAGUBIENIA ---
 
-    # A) ZAGUBIENIE (Overshoot) - OBA WIDZĄ BIAŁE (znacząco powyżej progu)
-    # Wykrycie, że robot całkowicie przejechał linię i jest na białej podłodze
+    # B1. ZAGUBIENIE (Overshoot) - OBA WIDZĄ BIAŁE (znacząco powyżej progu)
+    # Wykrycie, że robot całkowicie przejechał linię (koniec skrzyżowania)
     if l_val > THRESHOLD * 2 and r_val > THRESHOLD * 2: 
         
-        # Wykonaj manewr cofania
+        # Manewr Cofania i Skrętu w Prawo, aby złapać linię
+        # 1. Cofanie
         m1.on(REVERSE_SPEED)
         m2.on(REVERSE_SPEED)
         sleep(REVERSE_TIME) 
         
-        # Zatrzymaj się i wykonaj ostry skręt, by złapać linię
-        # Na przykład, jeśli miało być skrzyżowanie w prawo, cofamy i skręcamy w prawo:
+        # 2. Skręt w prawo (Lewe koło do przodu, Prawe stoi/cofnij)
         m1.on(TP)
-        m2.off() # Ostre skręcenie w prawo
-        sleep(0.5) 
+        m2.off() 
+        sleep(TURN_TIME) 
 
-        # Po manewrze skrętnym, kontynuujemy pętlę i wracamy do regulacji PD
-        continue # Przejdź do następnej iteracji pętli
+        # Reset błędu i kontynuacja pętli
+        last_error = 0
+        continue 
 
-    # B) SKRZYŻOWANIE (OBA CZARNE) - Priorytet jazdy prosto
+    # B2. SKRZYŻOWANIE (OBA CZARNE) - Priorytet jazdy prosto
+    # Jeśli oba sensory są na linii, jedź prosto
     if l_val < THRESHOLD and r_val < THRESHOLD:
         m1.on(TP)
         m2.on(TP)
-        # print("Skrzyzowanie, jade prosto")
-        last_error = 0 # Reset błędu, bo na skrzyżowaniu chcemy jechać prosto
-        continue # Przejdź do następnej iteracji, pomiń regulację PD
+        last_error = 0 # Reset błędu, by regulator nie korygował na skrzyżowaniu
+        continue 
         
-    # --- 3. REGULATOR PD (na proste odcinki i łagodne zakręty) ---
+    # --- C. REGULATOR PD (na proste odcinki i łagodne zakręty) ---
 
-    # Obliczenie Błędu (Error) - Proporcjonalny
-    error = l_val - r_val
+    # C1. Obliczenie Błędu Proporcjonalnego
+    error = l_val - r_val # Błąd: Jeśli lewy widzi czarne, błąd jest ujemny, turn będzie ujemny (skręt w lewo)
     
-    # Obliczenie pochodnej błędu (Derivative) - Różniczkujący
-    # To jest szybkość zmiany błędu od ostatniej pętli
+    # C2. Obliczenie pochodnej błędu (Różniczkujący)
     derivative = error - last_error
     
-    # Obliczenie Całkowitej Korekty Skrętu
+    # C3. Obliczenie Całkowitej Korekty Skrętu
     turn = (error * KP) + (derivative * KD)
     
-    # --- 4. APLIKACJA STEROWANIA ---
-    
-    # Oblicz prędkości
+    # C4. APLIKACJA STEROWANIA
     speed_m1 = TP + turn
     speed_m2 = TP - turn
 
-    # Zabezpieczenie mocy
+    # Ograniczenie mocy do bezpiecznego zakresu
     speed_m1 = max(min(speed_m1, 100), -100)
     speed_m2 = max(min(speed_m2, 100), -100)
     
@@ -91,12 +100,14 @@ while running:
     m1.on(speed_m1)
     m2.on(speed_m2)
     
-    # Zapisanie bieżącego błędu dla następnej iteracji
+    # C5. Zapisanie bieżącego błędu
     last_error = error
 
-    # --- 5. ZAKOŃCZENIE ---
-    # Jeśli s1.is_pressed:
-    #     running = False
+    # --- D. ZAKOŃCZENIE ---
+    if touch_sensor.is_pressed:
+        running = False
 
-# m1.off()
-# m2.off()
+# Zatrzymanie wszystkich silników po wyjściu z pętli
+m1.off()
+m2.off()
+m3.off()
