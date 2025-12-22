@@ -21,8 +21,8 @@ s3 = ColorSensor(INPUT_1)   # lewy
 
 speed = 8  # Zwiększono lekko bazową prędkość dla płynności (można zmienić na 10)
 intersection_time = 0.5
-kp = 0.8
-kd = 0.8
+kp = 0.3
+kd = 0.25
 black_threshold = 15 # Poniżej tej wartości uznajemy, że sensor widzi "czarne" (skrzyżowanie)
 
 # ================== FSM ==================
@@ -68,12 +68,12 @@ class Sterowanie:
         if self.strona == "L":
             m1.on(speed)
             m2.on(-speed)
-            time.sleep(1)
+            time.sleep(1.5)
             print('korekcja L')
         elif self.strona == "R":
             m1.on(-speed)
             m2.on(speed)
-            time.sleep(1)
+            time.sleep(1.5)
             print('korekcja R')
 
     def stop(self):
@@ -129,8 +129,8 @@ class Sterowanie:
                 m2_speed = -speed + turn
                 
                 # Zabezpieczenie zakresu mocy (-100 do 100)
-                m1_speed = max(min(m1_speed, 100), -100)
-                m2_speed = max(min(m2_speed, 100), -100)
+                m1_speed = max(min(m1_speed, 15), -15)
+                m2_speed = max(min(m2_speed, 15), -15)
                 
                 m1.on(m1_speed)
                 m2.on(m2_speed)
@@ -164,4 +164,4 @@ pojazd = Sterowanie()
 
 while True:
     pojazd.update()
-    time.sleep(0.005)
+#    time.sleep(0.005)
