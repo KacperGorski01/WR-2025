@@ -19,9 +19,10 @@ s3 = ColorSensor(INPUT_1)   # lewy
 
 # ================== PARAMETRY ==================
 
-speed = 20  # Zwiększono lekko bazową prędkość dla płynności (można zmienić na 10)
+speed = 8  # Zwiększono lekko bazową prędkość dla płynności (można zmienić na 10)
 intersection_time = 0.5
-kp = 0.4    # Współczynnik wzmocnienia dla ruchów korygujących (Gain)
+kp = 0.8
+kd = 0.8
 black_threshold = 15 # Poniżej tej wartości uznajemy, że sensor widzi "czarne" (skrzyżowanie)
 
 # ================== FSM ==================
@@ -34,6 +35,7 @@ class Sterowanie:
         self.strona = "Puste"
         self.black_start = None
         self.touch_prev = False
+        self.prev_error = 0  # <--- NAPRAWA: Inicjalizacja zmiennej dla członu D
         print("Naciśnij touch sensor! Stan: Idle")
 
     # ---------- ZMIANA STANU ----------
@@ -45,23 +47,19 @@ class Sterowanie:
             print("-> Stan:", nowy)
 
     # ---------- AKCJE ----------
-    # Zmieniono logikę metod ruchu, aby wspierały płynną korekcję
-    # W nowym podejściu sterujemy silnikami bezpośrednio w update(),
-    # ale zachowujemy metody dla kompatybilności struktury.
-
+    
     def go_straight(self):
         m1.on(-speed)
         m2.on(-speed)
 
     def turn_left(self):
-        # Metoda pomocnicza - w trybie proporcjonalnym sterowanie jest w update
         self.strona = "L"
 
     def turn_right(self):
-        # Metoda pomocnicza
         self.strona = "R"
 
     def skrzyzowanie(self):
+        # Jazda prosto z równą prędkością
         m1.on(-speed)
         m2.on(-speed)
 
@@ -85,7 +83,7 @@ class Sterowanie:
     # ---------- FSM ----------
     def update(self):
         
-        # ZMIANA 1: Odczyt intensywności (0-100) zamiast nazwy koloru
+        # Odczyt intensywności (0-100)
         L = s3.reflected_light_intensity
         R = s2.reflected_light_intensity
 
@@ -104,35 +102,29 @@ class Sterowanie:
         # ===== FOLLOW =====
         elif self.stan == "Follow":
             
-            # ZMIANA 2: Wykrywanie skrzyżowania na bazie progu (threshold)
-            # Jeśli oba czujniki widzą bardzo ciemno (< 15)
+            # NOWA LOGIKA: Wykrywanie skrzyżowania 4-stronnego
+            # Jeśli oba sensory widzą czarne (< 15), to jest to linia poprzeczna.
+            # Natychmiast przechodzimy do stanu 'Skrzyzowanie', aby przejechać je na wprost.
             if L < black_threshold and R < black_threshold:
-                if self.black_start is None:
-                    self.black_start = time.time()
-                    self.wstecz() # Zachowanie ze starego kodu
-                elif time.time() - self.black_start > intersection_time:
-                    self.ustaw_stan("Skrzyzowanie")
-                    return
+                self.ustaw_stan("Skrzyzowanie")
+                return
             
             else:
                 self.black_start = None
                 
-                # ZMIANA 3: Algorytm Proporcjonalny (P-Control)
-                # Obliczamy błąd: różnica jasności między lewym a prawym sensorem
+                # Algorytm PD (Proporcjonalno-Różniczkujący)
                 error = L - R
+                d_error = error - self.prev_error
                 
                 # Obliczamy korekcję skrętu
-                turn = error * kp
+                turn = error * kp + kd * d_error
+                self.prev_error = error
                 
-                # Aktualizacja zmiennej 'strona' dla logiki 'wstecz'
-                if error < -5: self.turn_left()  # L ciemniejsze -> skręt w lewo
-                elif error > 5: self.turn_right() # R ciemniejsze -> skręt w prawo
-                else: self.strona = "Puste"
+                # Aktualizacja zmiennej 'strona' (opcjonalne, dla logiki wstecz)
+                if error < -5: self.strona = "L"
+                elif error > 5: self.strona = "R"
 
-                # Aplikacja mocy na silniki (uwaga: w oryginalnym kodzie '-' to przód)
-                # Jeśli turn dodatni (L > R), robot skręca w prawo (lewy szybciej, prawy wolniej)
-                # Jeśli turn ujemny (L < R), robot skręca w lewo
-                
+                # Aplikacja mocy na silniki
                 m1_speed = -speed - turn
                 m2_speed = -speed + turn
                 
@@ -143,13 +135,19 @@ class Sterowanie:
                 m1.on(m1_speed)
                 m2.on(m2_speed)
 
-
         # ===== SKRZYŻOWANIE =====
         elif self.stan == "Skrzyzowanie":
             self.skrzyzowanie()
 
-            # Wyjście ze skrzyżowania, gdy oba zobaczą jasno (np. > 40)
-            if L > 40 and R > 40:
+            # NOWA LOGIKA WYJŚCIA:
+            # 1. "Blind Time": Przez pierwsze 0.2 sekundy ignorujemy czujniki.
+            #    Pozwala to robotowi wjechać na linię i zjechać z niej bez "paniki" algorytmu.
+            if time.time() - self.czas_wejscia_stan < 0.2:
+                return
+
+            # 2. Po upływie czasu "ślepęgo", sprawdzamy czy wyjechaliśmy na białe.
+            #    Jeśli którykolwiek sensor widzi jasno (> 40), uznajemy, że skrzyżowanie pokonane.
+            if L > 40 or R > 40:
                 self.black_start = None
                 self.ustaw_stan("Follow")
                 return
@@ -166,5 +164,4 @@ pojazd = Sterowanie()
 
 while True:
     pojazd.update()
-    # Zmniejszono sleep dla szybszej reakcji pętli sterowania
     time.sleep(0.005)
